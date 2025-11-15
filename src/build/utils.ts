@@ -9,6 +9,8 @@ import { getWorkspaceConfig } from "../common/config";
 import { ExtensionError } from "../common/errors";
 import { createDirectory, findFilesRecursive, isFileExists, removeDirectory } from "../common/files";
 import { commonLogger } from "../common/logger";
+import type { TaskTerminal } from "../common/tasks";
+import { assertUnreachable } from "../common/types";
 import type { DestinationPlatform } from "../destination/constants";
 import type { Destination } from "../destination/types";
 import { splitSupportedDestinatinos } from "../destination/utils";
@@ -416,4 +418,266 @@ export async function restartSwiftLSP() {
       error: error,
     });
   }
+}
+
+/**
+ * Builder for `xcodebuild` command arguments.
+ *
+ * Responsibilities:
+ * - Construct `xcodebuild` CLI invocations from structured inputs.
+ * - Parse additional argument arrays into three categories: build settings
+ *   (`KEY=VALUE`), parameters/options (flags with optional values, e.g.
+ *   `-workspace`, `-scheme`) and actions (`clean`, `build`, `test`).
+ * - Apply last-occurrence precedence for parameters and build settings.
+ *
+ * Output:
+ * - `build()` returns an array beginning with the executable (`xcodebuild`)
+ *   followed by build settings, options/flags, and actions. The array is
+ *   suitable for use with `child_process.spawn` or similar APIs.
+ *
+ * Notes:
+ * - Parsing and normalization are implemented by this class.
+ */
+export class XcodeCommandBuilder {
+  NO_VALUE = "__NO_VALUE__";
+
+  private xcodebuild = "xcodebuild";
+  private parameters: {
+    arg: string;
+    value: string | "__NO_VALUE__";
+  }[] = [];
+  private buildSettings: { key: string; value: string }[] = [];
+  private actions: string[] = [];
+
+  addBuildSettings(key: string, value: string) {
+    this.buildSettings.push({
+      key: key,
+      value: value,
+    });
+  }
+
+  addOption(flag: string) {
+    this.parameters.push({
+      arg: flag,
+      value: this.NO_VALUE,
+    });
+  }
+
+  addParameters(arg: string, value: string) {
+    this.parameters.push({
+      arg: arg,
+      value: value,
+    });
+  }
+
+  addAction(action: string) {
+    this.actions.push(action);
+  }
+
+  addAdditionalArgs(args: string[]) {
+    // Cases:
+    // ["-arg1", "value1", "-arg2", "value2", "-arg3", "-arg4", "value4"]
+    // ["xcodebuild", "-arg1", "value1", "-arg2", "value2", "-arg3", "-arg4", "value4"]
+    // ["ARG1=value1", "ARG2=value2", "ARG3", "ARG4=value4"]
+    // ["xcodebuild", "ARG1=value1", "ARG2=value2", "ARG3", "ARG4=value4"]
+    if (args.length === 0) {
+      return;
+    }
+
+    for (let i = 0; i < args.length; i++) {
+      const current = args[i];
+      const next = args[i + 1];
+      if (current && next && current.startsWith("-") && !next.startsWith("-")) {
+        this.parameters.push({
+          arg: current,
+          value: next,
+        });
+        i++;
+      } else if (current?.startsWith("-")) {
+        this.parameters.push({
+          arg: current,
+          value: this.NO_VALUE,
+        });
+      } else if (current?.includes("=")) {
+        const [arg, value] = current.split("=");
+        this.buildSettings.push({
+          key: arg,
+          value: value,
+        });
+      } else if (["clean", "build", "test"].includes(current)) {
+        this.actions.push(current);
+      } else {
+        commonLogger.warn("Unknown argument", {
+          argument: current,
+          args: args,
+        });
+      }
+    }
+
+    // Remove duplicates, with higher priority for the last occurrence
+    const seenParameters = new Set<string>();
+    this.parameters = this.parameters
+      .slice()
+      .reverse()
+      .filter((param) => {
+        if (seenParameters.has(param.arg)) {
+          return false;
+        }
+        seenParameters.add(param.arg);
+        return true;
+      })
+      .reverse();
+
+    // Remove duplicates, with higher priority for the last occurrence
+    const seenActions = new Set<string>();
+    this.actions = this.actions.filter((action) => {
+      if (seenActions.has(action)) {
+        return false;
+      }
+      seenActions.add(action);
+      return true;
+    });
+
+    // Remove duplicates, with higher priority for the last occurrence
+    const seenSettings = new Set<string>();
+    this.buildSettings = this.buildSettings
+      .slice()
+      .reverse()
+      .filter((setting) => {
+        if (seenSettings.has(setting.key)) {
+          return false;
+        }
+        seenSettings.add(setting.key);
+        return true;
+      })
+      .reverse();
+  }
+
+  build(): string[] {
+    const commandParts = [this.xcodebuild];
+
+    for (const { key, value } of this.buildSettings) {
+      commandParts.push(`${key}=${value}`);
+    }
+
+    for (const { arg, value } of this.parameters) {
+      commandParts.push(arg);
+      if (value !== this.NO_VALUE) {
+        commandParts.push(value);
+      }
+    }
+
+    for (const action of this.actions) {
+      commandParts.push(action);
+    }
+    return commandParts;
+  }
+}
+
+/**
+ * Watch markers are essential for detecting when debugger should start
+ */
+export function writeWatchMarkers(terminal: TaskTerminal) {
+  terminal.write("🍭 SweetPad: watch marker (start)\n");
+  terminal.write("🍩 SweetPad: watch marker (end)\n\n");
+}
+
+export async function ensureAppPathExists(appPath: string | undefined): Promise<string> {
+  if (!appPath) {
+    throw new ExtensionError("App path is empty. Something went wrong.");
+  }
+
+  const isExists = await isFileExists(appPath);
+  if (!isExists) {
+    throw new ExtensionError(`App path does not exist. Have you built the app? Path: ${appPath}`);
+  }
+  return appPath;
+}
+
+export function isXcbeautifyEnabled() {
+  return getWorkspaceConfig("build.xcbeautifyEnabled") ?? true;
+}
+
+/**
+ * Build destination string for xcodebuild command.
+ *
+ * Examples:
+ * - `platform=iOS Simulator,id=12345678-1234-1234-1234-123456789012,arch=x86_64`
+ * - `platform=macOS,arch=arm64`
+ * - `platform=iOS,arch=arm64`
+ */
+export function buildDestinationString(options: {
+  platform: string;
+  id?: string;
+  arch?: string;
+}): string {
+  const { platform, id, arch } = options;
+  if (id && arch) {
+    return `platform=${platform},id=${id},arch=${arch}`;
+  }
+  if (id && !arch) {
+    return `platform=${platform},id=${id}`;
+  }
+  if (!id && arch) {
+    return `platform=${platform},arch=${arch}`;
+  }
+  return `platform=${platform}`; // no id and no arch
+}
+
+export function getSimulatorArch(): string | undefined {
+  // Rosetta is technology that allows running x86_64 code on Apple Silicon Macs.
+  // This function instructs xcodebuild to build for x86_64 architecture when Rosetta destinations
+  // enabled in Xcode
+  const useRosetta = getWorkspaceConfig("build.rosettaDestination") ?? false;
+  if (useRosetta) {
+    return "x86_64";
+  }
+  return undefined; // let xcodebuild decide the architecture
+}
+
+/**
+ * Prepare and return destination string for xcodebuild command.
+ *
+ * WARN: Do not use result of this function to anything else than xcodebuild command.
+ */
+export function getXcodeBuildDestinationString(options: { destination: Destination }): string {
+  const destination = options.destination;
+
+  if (destination.type === "iOSSimulator") {
+    const arch = getSimulatorArch();
+    return buildDestinationString({ platform: "iOS Simulator", id: destination.udid, arch: arch });
+  }
+  if (destination.type === "watchOSSimulator") {
+    const arch = getSimulatorArch();
+    return buildDestinationString({ platform: "watchOS Simulator", id: destination.udid, arch: arch });
+  }
+  if (destination.type === "tvOSSimulator") {
+    const arch = getSimulatorArch();
+    return buildDestinationString({ platform: "tvOS Simulator", id: destination.udid, arch: arch });
+  }
+  if (destination.type === "visionOSSimulator") {
+    const arch = getSimulatorArch();
+    return buildDestinationString({ platform: "visionOS Simulator", id: destination.udid, arch: arch });
+  }
+  if (destination.type === "macOS") {
+    // note: without arch, xcodebuild will show warning like this:
+    // --- xcodebuild: WARNING: Using the first of multiple matching destinations:
+    // { platform:macOS, arch:arm64, id:00008103-000109910EC3001E, name:My Mac }
+    // { platform:macOS, arch:x86_64, id:00008103-000109910EC3001E, name:My Mac }
+    // return `platform=macOS,arch=${destination.arch}`;
+    return buildDestinationString({ platform: "macOS", arch: destination.arch });
+  }
+  if (destination.type === "iOSDevice") {
+    return buildDestinationString({ platform: "iOS", id: destination.udid });
+  }
+  if (destination.type === "watchOSDevice") {
+    return buildDestinationString({ platform: "watchOS", id: destination.udid });
+  }
+  if (destination.type === "tvOSDevice") {
+    return buildDestinationString({ platform: "tvOS", id: destination.udid });
+  }
+  if (destination.type === "visionOSDevice") {
+    return buildDestinationString({ platform: "visionOS", id: destination.udid });
+  }
+  return assertUnreachable(destination);
 }

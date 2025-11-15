@@ -12,6 +12,9 @@ export class BuildTreeItem extends vscode.TreeItem {
 
   constructor(options: {
     scheme: string;
+    isDefaultBuild: boolean;
+    isDefaultTesting: boolean;
+    isSchemeRunning: boolean;
     collapsibleState: vscode.TreeItemCollapsibleState;
     provider: BuildTreeProvider;
   }) {
@@ -22,15 +25,22 @@ export class BuildTreeItem extends vscode.TreeItem {
     this.iconPath = new vscode.ThemeIcon("sweetpad-package", color);
 
     let description = "";
-    if (this.scheme === this.provider.defaultSchemeForBuild) {
+    if (options.isDefaultBuild) {
       description = `${description} ✓`;
     }
-    if (this.scheme === this.provider.defaultSchemeForTesting) {
+    if (options.isDefaultTesting) {
       description = `${description} (t)`;
     }
     if (description) {
       this.description = description;
     }
+
+    // Examples:
+    //  - build&status=running
+    //  - build&status=stopped
+    const status = options.isSchemeRunning ? "running" : "idle";
+    const contextPrefix = "build";
+    this.contextValue = `${contextPrefix}&status=${status}`;
   }
 }
 
@@ -39,8 +49,6 @@ export class BuildTreeProvider implements vscode.TreeDataProvider<BuildTreeItem>
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   public context: ExtensionContext | undefined;
   public buildManager: BuildManager;
-  public defaultSchemeForBuild: string | undefined;
-  public defaultSchemeForTesting: string | undefined;
   private isLoading = false;
 
   constructor(options: { context: ExtensionContext; buildManager: BuildManager }) {
@@ -61,18 +69,16 @@ export class BuildTreeProvider implements vscode.TreeDataProvider<BuildTreeItem>
     });
 
     this.buildManager.on("defaultSchemeForBuildUpdated", (scheme) => {
-      this.defaultSchemeForBuild = scheme;
       this.updateView();
     });
     this.buildManager.on("defaultSchemeForTestingUpdated", (scheme) => {
-      this.defaultSchemeForTesting = scheme;
       this.updateView();
     });
-    this.defaultSchemeForBuild = this.buildManager.getDefaultSchemeForBuild();
-    this.defaultSchemeForTesting = this.buildManager.getDefaultSchemeForTesting();
   }
 
   private updateView(): void {
+    // We notify VSCode to update whole tree starting from root. Not so efficient,
+    // but helps to keep code simple
     this._onDidChangeTreeData.fire(null);
   }
 
@@ -122,14 +128,23 @@ export class BuildTreeProvider implements vscode.TreeDataProvider<BuildTreeItem>
       vscode.commands.executeCommand("setContext", "sweetpad.build.noSchemes", true);
     }
 
+    const defaultSchemeForBuild = this.buildManager.getDefaultSchemeForBuild();
+    const defaultSchemeForTesting = this.buildManager.getDefaultSchemeForTesting();
+
     // return list of schemes
-    return schemes.map(
-      (scheme) =>
-        new BuildTreeItem({
-          scheme: scheme.name,
-          collapsibleState: vscode.TreeItemCollapsibleState.None,
-          provider: this,
-        }),
-    );
+    return schemes.map((scheme) => {
+      const isDefaultBuild = scheme.name === defaultSchemeForBuild;
+      const isDefaultTesting = scheme.name === defaultSchemeForTesting;
+      const isSchemeRunning = this.buildManager.isSchemeRunning(scheme.name);
+
+      return new BuildTreeItem({
+        scheme: scheme.name,
+        isDefaultBuild: isDefaultBuild,
+        isDefaultTesting: isDefaultTesting,
+        isSchemeRunning: isSchemeRunning,
+        collapsibleState: vscode.TreeItemCollapsibleState.None,
+        provider: this,
+      });
+    });
   }
 }

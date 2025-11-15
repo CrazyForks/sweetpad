@@ -272,17 +272,20 @@
         {
           "id": "sweetpad.build.view",
           "name": "Build",
-          "visibility": "visible"
+          "visibility": "visible",
+          "icon": "$(sweetpad-tool)"
         },
         {
           "id": "sweetpad.destinations.view",
           "name": "Destinations",
-          "visibility": "collapsed"
+          "visibility": "collapsed",
+          "icon": "$(sweetpad-device)"
         },
         {
           "id": "sweetpad.tools.view",
           "name": "Tools",
-          "visibility": "collapsed"
+          "visibility": "collapsed",
+          "icon": "$(sweetpad-tool)"
         }
       ]
     },
@@ -323,6 +326,11 @@
         "command": "sweetpad.build.run",
         "title": "SweetPad: Run (without Build)",
         "icon": "$(play)"
+      },
+      {
+        "command": "sweetpad.build.stop",
+        "title": "SweetPad: Stop running app",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "sweetpad.build.build",
@@ -587,7 +595,12 @@
         },
         {
           "command": "sweetpad.build.launch",
-          "when": "view == sweetpad.build.view",
+          "when": "view == sweetpad.build.view && viewItem =~ /build.*&status=idle.*/",
+          "group": "inline@2"
+        },
+        {
+          "command": "sweetpad.build.stop",
+          "when": "view == sweetpad.build.view && viewItem =~ /build.*&status=running.*/",
           "group": "inline@2"
         },
         {

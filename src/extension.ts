@@ -16,6 +16,7 @@ import {
   selectConfigurationForBuildCommand,
   selectXcodeSchemeForBuildCommand,
   selectXcodeWorkspaceCommand,
+  stopCommand,
   testCommand,
 } from "./build/commands.js";
 import { BuildManager } from "./build/manager.js";
@@ -149,6 +150,7 @@ export function activate(context: vscode.ExtensionContext) {
   d(command("sweetpad.build.refreshSchemes", refreshSchemesCommand));
   d(command("sweetpad.build.launch", launchCommand));
   d(command("sweetpad.build.run", runCommand));
+  d(command("sweetpad.build.stop", stopCommand));
   d(command("sweetpad.build.build", buildCommand));
   d(command("sweetpad.build.clean", cleanCommand));
   d(command("sweetpad.build.test", testCommand));

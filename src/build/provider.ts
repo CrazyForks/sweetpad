@@ -12,16 +12,15 @@ import {
 } from "../common/tasks";
 import { assertUnreachable } from "../common/types";
 import type { Destination } from "../destination/types";
-import {
-  buildApp,
-  getXcodeBuildDestinationString,
-  resolveDependencies,
-  runOnMac,
-  runOniOSDevice,
-  runOniOSSimulator,
-} from "./commands";
+import { resolveDependencies } from "./commands";
 import { DEFAULT_BUILD_PROBLEM_MATCHERS } from "./constants";
-import { askConfiguration, askDestinationToRunOn, askSchemeForBuild, askXcodeWorkspacePath } from "./utils";
+import {
+  askConfiguration,
+  askDestinationToRunOn,
+  askSchemeForBuild,
+  askXcodeWorkspacePath,
+  getXcodeBuildDestinationString,
+} from "./utils";
 
 interface TaskDefinition extends vscode.TaskDefinition {
   type: string;
@@ -187,7 +186,7 @@ class ActionDispatcher {
     const launchArgs: string[] = definition.launchArgs ?? getWorkspaceConfig("build.launchArgs") ?? [];
     const launchEnv: { [key: string]: string } = definition.launchEnv ?? getWorkspaceConfig("build.launchEnv") ?? {};
 
-    await buildApp(this.context, terminal, {
+    await this.context.buildManager.buildAppTask(terminal, {
       scheme: scheme,
       sdk: sdk,
       configuration: configuration,
@@ -200,7 +199,7 @@ class ActionDispatcher {
     });
 
     if (destination.type === "macOS") {
-      await runOnMac(this.context, terminal, {
+      await this.context.buildManager.runOnMacTask(terminal, {
         scheme: scheme,
         configuration: configuration,
         xcworkspace: xcworkspace,
@@ -214,7 +213,7 @@ class ActionDispatcher {
       destination.type === "visionOSSimulator" ||
       destination.type === "tvOSSimulator"
     ) {
-      await runOniOSSimulator(this.context, terminal, {
+      await this.context.buildManager.runOniOSSimulatorTask(terminal, {
         scheme: scheme,
         destination: destination,
         sdk: sdk,
@@ -231,7 +230,7 @@ class ActionDispatcher {
       destination.type === "tvOSDevice" ||
       destination.type === "visionOSDevice"
     ) {
-      await runOniOSDevice(this.context, terminal, {
+      await this.context.buildManager.runOniOSDeviceTask(terminal, {
         scheme: scheme,
         destination: destination,
         sdk: sdk,
@@ -287,7 +286,7 @@ class ActionDispatcher {
 
     const sdk = destination.platform;
 
-    await buildApp(this.context, terminal, {
+    await this.context.buildManager.buildAppTask(terminal, {
       scheme: scheme,
       sdk: sdk,
       configuration: configuration,
@@ -344,7 +343,7 @@ class ActionDispatcher {
     const launchEnv: { [key: string]: string } = definition.launchEnv ?? getWorkspaceConfig("build.launchEnv") ?? {};
 
     if (destination.type === "macOS") {
-      await runOnMac(this.context, terminal, {
+      await this.context.buildManager.runOnMacTask(terminal, {
         scheme: scheme,
         configuration: configuration,
         xcworkspace: xcworkspace,
@@ -358,7 +357,7 @@ class ActionDispatcher {
       destination.type === "visionOSSimulator" ||
       destination.type === "tvOSSimulator"
     ) {
-      await runOniOSSimulator(this.context, terminal, {
+      await this.context.buildManager.runOniOSSimulatorTask(terminal, {
         scheme: scheme,
         destination: destination,
         sdk: sdk,
@@ -375,7 +374,7 @@ class ActionDispatcher {
       destination.type === "tvOSDevice" ||
       destination.type === "visionOSDevice"
     ) {
-      await runOniOSDevice(this.context, terminal, {
+      await this.context.buildManager.runOniOSDeviceTask(terminal, {
         scheme: scheme,
         destination: destination,
         sdk: sdk,
@@ -419,7 +418,7 @@ class ActionDispatcher {
 
     const sdk = destination.platform;
 
-    await buildApp(this.context, terminal, {
+    await this.context.buildManager.buildAppTask(terminal, {
       scheme: scheme,
       sdk: sdk,
       configuration: configuration,
@@ -459,7 +458,7 @@ class ActionDispatcher {
 
     const sdk = destination.platform;
 
-    await buildApp(this.context, terminal, {
+    await this.context.buildManager.buildAppTask(terminal, {
       scheme: scheme,
       sdk: sdk,
       configuration: configuration,
